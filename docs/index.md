@@ -1,12 +1,17 @@
 # books-db
 
-Welcome to the **books-db** documentation.
+`books-db` turns personal CSV and Goodreads TSV reading lists into a
+normalized, file-backed SQLite database.
 
-## Overview
+## Highlights
 
-books-db is a Python application.
+- Standard-library CSV parsing, CLI handling, and SQLite persistence
+- Normalized author, series, and source lookup tables
+- Five constrained reading statuses
+- Full-file validation before database changes
+- Interactive duplicate resolution
+- One transaction per import, with rollback on errors or cancellation
 
-## Quick Links
-
-- [Usage Guide](usage.md) — installation and running instructions
-- [API Reference](api.md) — auto-generated from source code
+Start with the [usage guide](usage.md) for accepted headers, exact status
+mappings, duplicate choices, and examples. The [API reference](api.md)
+documents the reusable Python interfaces.
