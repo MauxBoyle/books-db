@@ -1,66 +1,150 @@
 # books-db
 
+`books-db` imports a personal reading list into a normalized, file-backed
+SQLite database. It supports a personal comma-separated format and a Goodreads
+tab-separated export without requiring a database server.
+
 ## Installation
 
-Clone the repository, then install its dependencies:
+Clone the repository and restore the environment:
 
 ```bash
 uv sync
 ```
 
-## Usage
+## Importing books
 
-Run via the CLI entrypoint:
-
-```bash
-uv run books_db
-```
-
-Run with the development environment:
+Import into `books.db` in the current directory:
 
 ```bash
-uv run --env-file .env books_db
+uv run books_db import path/to/books.csv
 ```
 
-Or run as a Python module:
+Choose another database file:
 
 ```bash
-uv run python -m books_db
+uv run books_db import path/to/goodreads.tsv --database data/library.db
 ```
 
-## Environment Variables
-
-`.env.example` is the configuration template. Copy it to `.env` for development.
-
-- `LOG_LEVEL` defaults to `INFO`; `.env` sets it to `DEBUG` for verbose console output.
-- `LOG_FILE` defaults to `app.log` and sets the path to the log file.
-
-`uv run --env-file .env` loads the development environment explicitly; it is not loaded automatically.
-
-## Testing
-
-Run tests:
+The same CLI is available as a module:
 
 ```bash
-uv run pytest
+uv run python -m books_db import path/to/books.csv
 ```
 
-Run tests with coverage:
+The command prints imported, replaced, and skipped totals. A successful import
+returns exit code `0`; validation, storage, or cancellation failures return
+`1`. Invalid command-line usage uses argparse's standard exit code `2`.
+
+## Personal CSV format
+
+The personal format is comma-separated. Header matching ignores case, leading
+or trailing whitespace, and repeated internal whitespace.
+
+| Value | Accepted headers | Required |
+|---|---|---|
+| Title | `Title`, `Book Title` | Yes |
+| Author | `Author`, `Author Name` | No |
+| Series | `Series`, `Series Name` | No |
+| Year | `Year`, `Publication Year`, `Published Year`, `Original Publication Year`, `Year Published` | No |
+| Status | `Status`, `Read Status`, `Read?`, `Read` | No |
+| Source | `Source`, `Recommendation Source` | No |
+| Notes | `Notes`, `Note` | No |
+
+Example:
+
+```csv
+Title,Author,Series,Year,Status,Source,Notes
+Kindred,Octavia E. Butler,,1979,read,Friend,Excellent
+Piranesi,Susanna Clarke,,2020,unread,Book club,
+```
+
+Blank statuses default to `unread`. The five stored statuses and accepted
+personal aliases are:
+
+| Stored status | Accepted personal values |
+|---|---|
+| `unread` | blank, `unread`, `no`, `n`, `false`, `0` |
+| `currently reading` | `currently reading`, `reading`, `currently-reading` |
+| `read` | `read`, `yes`, `y`, `true`, `1` |
+| `did not finish` | `did not finish`, `dnf`, `did-not-finish` |
+| `on hold` | `on hold`, `hold`, `on-hold` |
+
+Status matching is case-insensitive and ignores surrounding or repeated
+whitespace.
+
+## Goodreads TSV format
+
+The Goodreads format must be tab-separated. `Title` is required. Recognized
+optional columns are `Author`, `Series`, `Original Publication Year`,
+`Year Published`, `Publication Year`, `Exclusive Shelf`, `Date Read`,
+`My Review`, `Private Notes`, and `Source`. Columns such as
+`Additional Authors` and `Book Id` are safely ignored.
+
+`Exclusive Shelf` maps as follows:
+
+| Goodreads shelf | Stored status |
+|---|---|
+| `to-read` | `unread` |
+| `currently-reading` | `currently reading` |
+| `read` | `read` |
+
+When the shelf is blank, a nonblank `Date Read` produces `read`; otherwise the
+status is `unread`. Any other nonblank shelf is rejected.
+
+When present, review text and private notes are stored as labeled sections:
+
+```text
+My Review:
+Review text
+
+Private Notes:
+Private note text
+```
+
+Both import formats are read as UTF-8 with optional BOM support.
+
+## Validation and duplicates
+
+Every data row needs a nonblank title. Author, series, year, source, and notes
+may be blank; a nonblank year must be an integer. Errors identify the filename,
+row, field, rejected value, and how to correct it.
+
+The whole file is validated before the database is opened or changed. A valid
+import then runs in one explicit transaction. Storage errors, aborting,
+Ctrl-C, or input EOF roll back every change from that import.
+
+A possible duplicate is an exact title-and-author match after trimming,
+collapsing whitespace, and case-folding. Two books with missing authors can
+therefore match. Each row is checked against existing records and rows inserted
+earlier in the same import. The prompt displays every match and offers:
+
+- keep the existing record and skip the incoming row;
+- import another copy;
+- replace one selected match; or
+- abort and roll back the import.
+
+## Database schema
+
+SQLite stores books in `books` with nullable foreign keys to the normalized
+`authors`, `series`, and `sources` lookup tables. Repeated lookup values share
+one row while retaining the first display spelling. The five reading statuses
+are enforced by a database `CHECK` constraint, and foreign-key enforcement is
+enabled on every application connection.
+
+## Development
+
+Run the verification suite:
 
 ```bash
 uv run pytest --cov
+uv run ruff check .
+uv run ruff format --check .
+uv run mkdocs build --strict
 ```
 
-## Documentation
-
-Preview documentation locally:
+Preview the documentation with:
 
 ```bash
 uv run python scripts/serve_docs.py
-```
-
-Build static documentation:
-
-```bash
-uv run mkdocs build
 ```
