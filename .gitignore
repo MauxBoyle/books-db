@@ -103,3 +103,9 @@ htmlcov/
 .coverage
 .env
 .env.test
+data/*
+!data/README.md
+!data/processed/
+!data/processed/.gitkeep
+!data/unprocessed/
+!data/unprocessed/.gitkeep
