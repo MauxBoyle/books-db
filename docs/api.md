@@ -28,6 +28,9 @@
         - insert_book
         - replace_book
         - find_duplicates
+        - get_book
+        - list_books
+        - update_book_metadata
       show_source: true
 
 ## Import service
@@ -38,4 +41,26 @@
         - ImportCancelled
         - ImportSummary
         - import_books
+      show_source: true
+
+## Enrichment service
+
+::: books_db.enrichment
+    options:
+      members:
+        - EnrichmentCancelled
+        - EnrichmentConfigurationError
+        - EnrichmentSummary
+        - resolve_contact_email
+        - enrich_books
+      show_source: true
+
+## Open Library client
+
+::: books_db.open_library
+    options:
+      members:
+        - OpenLibraryLookupError
+        - OpenLibraryCandidate
+        - OpenLibraryClient
       show_source: true

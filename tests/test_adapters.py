@@ -232,3 +232,42 @@ def test_unknown_header_format_is_rejected(tmp_path):
 
     with pytest.raises(ImportValidationError, match="header"):
         parse_import_file(import_path)
+
+
+def test_personal_isbn_headers_are_normalized_and_isbn13_is_preferred(tmp_path):
+    import_path = tmp_path / "isbn.csv"
+    write_rows(
+        import_path,
+        [
+            ["Title", "ISBN-10", "ISBN-13"],
+            ["Dune", " 0-441-17271-7 ", '="978-0-441-17271-9"'],
+        ],
+    )
+
+    assert parse_import_file(import_path)[0].isbn == "9780441172719"
+
+
+def test_goodreads_isbn_columns_are_supported(tmp_path):
+    import_path = tmp_path / "goodreads.tsv"
+    write_rows(
+        import_path,
+        [
+            ["Title", "Book Id", "Exclusive Shelf", "ISBN", "ISBN13"],
+            ["Dune", "1", "read", '="0441172717"', '="9780441172719"'],
+        ],
+        delimiter="\t",
+    )
+
+    assert parse_import_file(import_path)[0].isbn == "9780441172719"
+
+
+@pytest.mark.parametrize(
+    "isbn",
+    ["123", "0441172718", "9780441172718", "978044117271X"],
+)
+def test_invalid_isbn_is_actionable(tmp_path, isbn):
+    import_path = tmp_path / "bad-isbn.csv"
+    write_rows(import_path, [["Title", "ISBN"], ["Dune", isbn]])
+
+    with pytest.raises(ImportValidationError, match="valid ISBN"):
+        parse_import_file(import_path)

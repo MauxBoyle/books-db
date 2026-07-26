@@ -4,8 +4,10 @@ import csv
 
 import pytest
 
+import books_db.app
 from books_db.app import main
 from books_db.database import connect_database
+from books_db.enrichment import EnrichmentSummary
 
 
 def write_csv(path, rows):
@@ -99,3 +101,92 @@ def test_invalid_cli_usage_uses_argparse_exit_code(arguments):
         main(arguments)
 
     assert error.value.code == 2
+
+
+def test_cli_enrich_passes_database_and_contact_and_prints_summary(
+    tmp_path, monkeypatch, capsys
+):
+    database_path = tmp_path / "books.db"
+    calls = []
+
+    def fake_enrich(path, **options):
+        calls.append((path, options))
+        return EnrichmentSummary(
+            reviewed=3,
+            updated=1,
+            unchanged=2,
+            skipped=1,
+            not_found=1,
+            failed=1,
+        )
+
+    monkeypatch.setattr(books_db.app, "enrich_books", fake_enrich)
+
+    exit_code = main(
+        [
+            "enrich",
+            "--database",
+            str(database_path),
+            "--contact-email",
+            "reader@example.com",
+        ]
+    )
+
+    assert exit_code == 0
+    assert calls[0][0] == database_path
+    assert calls[0][1]["contact_email"] == "reader@example.com"
+    assert "3 reviewed, 1 updated, 2 unchanged" in capsys.readouterr().out
+
+
+def test_import_enrichment_runs_after_commit_for_only_affected_ids(
+    tmp_path, monkeypatch
+):
+    import_path = tmp_path / "books.csv"
+    database_path = tmp_path / "books.db"
+    write_csv(import_path, [["Title"], ["Dune"]])
+    seen = []
+
+    def fake_enrich(path, **options):
+        assert count_books(path) == 1
+        seen.extend(options["book_ids"])
+        return EnrichmentSummary()
+
+    monkeypatch.setattr(books_db.app, "enrich_books", fake_enrich)
+
+    exit_code = main(
+        [
+            "import",
+            str(import_path),
+            "--database",
+            str(database_path),
+            "--enrich",
+            "--contact-email",
+            "reader@example.com",
+        ]
+    )
+
+    assert exit_code == 0
+    assert seen == [1]
+
+
+def test_import_remains_committed_when_enrichment_configuration_is_missing(
+    tmp_path, monkeypatch, capsys
+):
+    import_path = tmp_path / "books.csv"
+    database_path = tmp_path / "books.db"
+    write_csv(import_path, [["Title"], ["Dune"]])
+    monkeypatch.delenv("BOOKS_DB_OPEN_LIBRARY_EMAIL", raising=False)
+
+    exit_code = main(
+        [
+            "import",
+            str(import_path),
+            "--database",
+            str(database_path),
+            "--enrich",
+        ]
+    )
+
+    assert exit_code == 1
+    assert count_books(database_path) == 1
+    assert "BOOKS_DB_OPEN_LIBRARY_EMAIL" in capsys.readouterr().err
