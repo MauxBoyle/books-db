@@ -8,6 +8,14 @@ Clone the repository and restore the environment:
 uv sync
 ```
 
+If the generated `books_db` command reports `ModuleNotFoundError: No module
+named 'books_db'`, run it with the source directory explicitly on Python's
+import path:
+
+```bash
+PYTHONPATH=src uv run --no-sync books_db import path/to/books.csv
+```
+
 ## CLI
 
 Import a personal CSV into the default `books.db` in the current directory:
