@@ -172,6 +172,7 @@ def test_import_enrichment_runs_after_commit_for_only_affected_ids(
 def test_import_remains_committed_when_enrichment_configuration_is_missing(
     tmp_path, monkeypatch, capsys
 ):
+    monkeypatch.chdir(tmp_path)
     import_path = tmp_path / "books.csv"
     database_path = tmp_path / "books.db"
     write_csv(import_path, [["Title"], ["Dune"]])

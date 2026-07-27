@@ -141,15 +141,19 @@ uv run books_db enrich --database data/library.db \
 The email can instead be set once:
 
 ```bash
-export BOOKS_DB_OPEN_LIBRARY_EMAIL=reader@example.com
+cp .env.example .env
+# Set BOOKS_DB_OPEN_LIBRARY_EMAIL in .env, then run:
 uv run books_db enrich --database data/library.db
 ```
 
-The application identifies itself to Open Library using this address. It
-searches by ISBN when available, otherwise by title and optional author. When
-several results are returned, it displays at most five for selection. It then
-reviews changed ISBN, title, author, series, and year values in that order.
-Only the full word `accept` changes a field; `keep` retains the stored value.
+The ignored local `.env` file can hold the address without committing it. An
+explicit `--contact-email` takes precedence over the process environment and
+`.env`. The application identifies itself to Open Library using this address.
+It searches by ISBN when available, otherwise by title and optional author.
+When several results are returned, it displays at most five for selection. It
+then reviews changed ISBN, title, author, series, and year values in that order.
+Missing stored values are accepted automatically. For other differences, press
+Enter to accept the proposed value or enter `keep` to retain the stored value.
 Source, reading status, and notes are never changed.
 
 The integration follows Open Library's

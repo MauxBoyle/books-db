@@ -8,6 +8,8 @@ from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
+from dotenv import dotenv_values
+
 from books_db.database import (
     BookRecord,
     connect_database,
@@ -59,15 +61,20 @@ class EnrichmentSummary:
 
 
 def resolve_contact_email(contact_email: str | None = None) -> str:
-    """Resolve explicit contact configuration before the environment fallback."""
+    """Resolve explicit, environment, then local ``.env`` contact configuration."""
 
-    resolved = (contact_email or "").strip() or os.environ.get(
-        "BOOKS_DB_OPEN_LIBRARY_EMAIL", ""
-    ).strip()
+    variable_name = "BOOKS_DB_OPEN_LIBRARY_EMAIL"
+    env_file_value = dotenv_values(Path.cwd() / ".env").get(variable_name) or ""
+    resolved = (
+        (contact_email or "").strip()
+        or os.environ.get(variable_name, "").strip()
+        or env_file_value.strip()
+    )
     if not resolved:
         raise EnrichmentConfigurationError(
             "Open Library enrichment requires --contact-email EMAIL or the "
-            "BOOKS_DB_OPEN_LIBRARY_EMAIL environment variable."
+            "BOOKS_DB_OPEN_LIBRARY_EMAIL setting in the environment or a local "
+            ".env file."
         )
     return resolved
 
@@ -147,9 +154,9 @@ def _review_field(
     )
     while True:
         choice = normalize_value(
-            _ask(input_func, f"{field_name}: type accept or keep: ")
+            _ask(input_func, f"{field_name}: press Enter to accept, or type keep: ")
         )
-        if choice == "accept":
+        if choice in {"", "accept"}:
             return True
         if choice == "keep":
             return False
@@ -158,7 +165,7 @@ def _review_field(
                 "Enrichment cancelled; completed books remain saved and the current "
                 "book was not changed."
             )
-        output_func("Type accept or keep.")
+        output_func("Press Enter to accept, or type keep.")
 
 
 def _review_book(
@@ -186,6 +193,11 @@ def _review_book(
     for label, field, proposed in proposals:
         stored = values[field]
         if proposed is None or _equivalent(stored, proposed):
+            continue
+        if stored is None:
+            output_func(f"{label}: stored=(none) | proposed={proposed} | accepted")
+            values[field] = proposed
+            changed = True
             continue
         if _review_field(label, stored, proposed, input_func, output_func):
             values[field] = proposed

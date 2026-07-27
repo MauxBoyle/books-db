@@ -160,7 +160,8 @@ Aborting, Ctrl-C, input EOF, or a storage error rolls back the entire import.
 ## Open Library enrichment
 
 Open Library asks API clients to identify themselves. Supply a contact address
-on the command line or through the environment:
+on the command line, through the environment, or in an ignored local `.env`
+file:
 
 ```bash
 uv run books_db enrich --database data/library.db \
@@ -168,13 +169,18 @@ uv run books_db enrich --database data/library.db \
 
 export BOOKS_DB_OPEN_LIBRARY_EMAIL=reader@example.com
 uv run books_db enrich --database data/library.db
+
+cp .env.example .env
+# Set BOOKS_DB_OPEN_LIBRARY_EMAIL in .env, then run:
+uv run books_db enrich --database data/library.db
 ```
 
 See Open Library's [API usage guidelines](https://openlibrary.org/developers/api)
 and [Search API documentation](https://openlibrary.org/dev/docs/api/search).
 
 An explicit `--contact-email` takes precedence over
-`BOOKS_DB_OPEN_LIBRARY_EMAIL`. If neither is present, enrichment exits with
+`BOOKS_DB_OPEN_LIBRARY_EMAIL` in the process environment, which takes
+precedence over the value in `.env`. If none is present, enrichment exits with
 actionable configuration guidance.
 
 Standalone enrichment processes every book in ID order. `import --enrich`
@@ -194,10 +200,11 @@ For a selected result, differing fields are shown in this order:
 4. Series
 5. Year
 
-Enter exactly `accept` to use the proposed value or `keep` to retain the stored
-one. Differences that normalize to the same text are ignored. Blank fields
-still require approval before being filled. Source, status, and notes are
-never reviewed or changed.
+When a stored field is blank, the proposed value is accepted without a prompt.
+For other differences, press Enter (the default) or enter `accept` to use the
+proposed value; enter `keep` to retain the stored one. Differences that
+normalize to the same text are ignored. Source, status, and notes are never
+reviewed or changed.
 
 Accepted changes are committed after each book. `cancel`, Ctrl-C, or input EOF
 returns failure, preserves completed books and any preceding import, and
