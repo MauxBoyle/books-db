@@ -50,6 +50,9 @@ _PERSONAL_HEADERS = {
     "status": {"status", "read status", "read?", "read"},
     "source": {"source", "recommendation source"},
     "notes": {"notes", "note"},
+    "isbn": {"isbn"},
+    "isbn10": {"isbn-10", "isbn 10"},
+    "isbn13": {"isbn-13", "isbn 13"},
 }
 
 _GOODREADS_HEADERS = {
@@ -62,6 +65,8 @@ _GOODREADS_HEADERS = {
     "review": {"my review"},
     "private_notes": {"private notes"},
     "source": {"source"},
+    "isbn": {"isbn"},
+    "isbn13": {"isbn13", "isbn-13", "isbn 13"},
 }
 
 _GOODREADS_MARKERS = {
@@ -209,6 +214,84 @@ def _year(path: Path, row_number: int, raw_value: str) -> int | None:
         ) from error
 
 
+def normalize_isbn(value: str | None) -> str | None:
+    """Remove common spreadsheet formatting and validate an ISBN checksum."""
+
+    if value is None:
+        return None
+    cleaned = value.strip()
+    if cleaned.startswith("="):
+        cleaned = cleaned[1:].strip()
+    cleaned = cleaned.strip("\"'")
+    normalized = "".join(character for character in cleaned if character not in " -")
+    if not normalized:
+        return None
+    normalized = normalized.upper()
+    if len(normalized) == 10:
+        if not normalized[:9].isdigit() or not (
+            normalized[9].isdigit() or normalized[9] == "X"
+        ):
+            raise ValueError("ISBN-10 must contain nine digits and a digit or X")
+        values = [int(character) for character in normalized[:9]]
+        values.append(10 if normalized[9] == "X" else int(normalized[9]))
+        if (
+            sum(
+                weight * digit
+                for weight, digit in zip(range(10, 0, -1), values, strict=True)
+            )
+            % 11
+        ):
+            raise ValueError("ISBN-10 checksum is invalid")
+        return normalized
+    if len(normalized) == 13:
+        if not normalized.isdigit():
+            raise ValueError("ISBN-13 must contain only digits")
+        checksum = sum(
+            int(character) * (1 if index % 2 == 0 else 3)
+            for index, character in enumerate(normalized)
+        )
+        if checksum % 10:
+            raise ValueError("ISBN-13 checksum is invalid")
+        return normalized
+    raise ValueError("ISBN must contain 10 or 13 characters")
+
+
+def _isbn(
+    path: Path, row_number: int, row: Sequence[str], mapping: dict[str, int]
+) -> str | None:
+    parsed: dict[str, str] = {}
+    for field in ("isbn", "isbn10", "isbn13"):
+        raw_value = _cell(row, mapping, field)
+        if not raw_value.strip():
+            continue
+        try:
+            normalized = normalize_isbn(raw_value)
+        except ValueError as error:
+            raise ImportValidationError(
+                path,
+                row_number,
+                field.replace("isbn", "ISBN-").rstrip("-"),
+                raw_value,
+                f"enter a valid ISBN-10 or ISBN-13 ({error})",
+            ) from error
+        if normalized is not None:
+            expected_length = (
+                10 if field == "isbn10" else 13 if field == "isbn13" else None
+            )
+            if expected_length is not None and len(normalized) != expected_length:
+                raise ImportValidationError(
+                    path,
+                    row_number,
+                    field.upper(),
+                    raw_value,
+                    f"enter a valid ISBN-{expected_length}",
+                )
+            parsed[field] = normalized
+
+    isbn13 = next((value for value in parsed.values() if len(value) == 13), None)
+    return isbn13 or next(iter(parsed.values()), None)
+
+
 def _title(path: Path, row_number: int, raw_value: str) -> str:
     cleaned = clean_display_value(raw_value)
     if cleaned is None:
@@ -267,6 +350,7 @@ def _personal_book(
         source=clean_display_value(_cell(row, mapping, "source")),
         status=_personal_status(path, row_number, _cell(row, mapping, "status")),
         notes=_optional_text(_cell(row, mapping, "notes")),
+        isbn=_isbn(path, row_number, row, mapping),
     )
 
 
@@ -297,6 +381,7 @@ def _goodreads_book(
             _cell(row, mapping, "date_read"),
         ),
         notes=_goodreads_notes(row, mapping),
+        isbn=_isbn(path, row_number, row, mapping),
     )
 
 

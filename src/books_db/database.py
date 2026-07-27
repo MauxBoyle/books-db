@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import sqlite3
+from collections.abc import Sequence
 from dataclasses import dataclass
 from enum import StrEnum
 from pathlib import Path
@@ -29,6 +30,7 @@ class BookInput:
     source: str | None = None
     status: ReadStatus = ReadStatus.UNREAD
     notes: str | None = None
+    isbn: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -43,6 +45,7 @@ class BookRecord:
     source: str | None
     status: ReadStatus
     notes: str | None
+    isbn: str | None = None
 
 
 _LOOKUP_TABLES = frozenset({"authors", "series", "sources"})
@@ -74,6 +77,7 @@ _SCHEMA_STATEMENTS = (
         id INTEGER PRIMARY KEY,
         title TEXT NOT NULL,
         normalized_title TEXT NOT NULL,
+        isbn TEXT,
         author_id INTEGER,
         series_id INTEGER,
         publication_year INTEGER,
@@ -97,6 +101,13 @@ _SCHEMA_STATEMENTS = (
     """
     CREATE INDEX IF NOT EXISTS books_duplicate_key
     ON books (normalized_title, author_id)
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS open_library_cache (
+        request_url TEXT PRIMARY KEY,
+        response_json TEXT NOT NULL,
+        fetched_at REAL NOT NULL
+    )
     """,
 )
 
@@ -126,10 +137,15 @@ def connect_database(path: str | Path) -> sqlite3.Connection:
 
 
 def create_schema(connection: sqlite3.Connection) -> None:
-    """Create all normalized tables on an existing connection."""
+    """Create all tables and idempotently migrate older databases."""
 
     for statement in _SCHEMA_STATEMENTS:
         connection.execute(statement)
+    book_columns = {
+        str(row["name"]) for row in connection.execute("PRAGMA table_info(books)")
+    }
+    if "isbn" not in book_columns:
+        connection.execute("ALTER TABLE books ADD COLUMN isbn TEXT")
 
 
 def _lookup_id(
@@ -157,7 +173,17 @@ def _lookup_id(
 
 def _book_values(
     connection: sqlite3.Connection, book: BookInput
-) -> tuple[str, str, int | None, int | None, int | None, int | None, str, str | None]:
+) -> tuple[
+    str,
+    str,
+    str | None,
+    int | None,
+    int | None,
+    int | None,
+    int | None,
+    str,
+    str | None,
+]:
     title = clean_display_value(book.title)
     if title is None:
         raise ValueError("Book title cannot be blank")
@@ -165,6 +191,7 @@ def _book_values(
     return (
         title,
         normalize_value(title),
+        book.isbn,
         _lookup_id(connection, "authors", book.author),
         _lookup_id(connection, "series", book.series),
         book.publication_year,
@@ -182,6 +209,7 @@ def insert_book(connection: sqlite3.Connection, book: BookInput) -> int:
         INSERT INTO books (
             title,
             normalized_title,
+            isbn,
             author_id,
             series_id,
             publication_year,
@@ -189,7 +217,7 @@ def insert_book(connection: sqlite3.Connection, book: BookInput) -> int:
             status,
             notes
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         _book_values(connection, book),
     )
@@ -205,6 +233,7 @@ def replace_book(connection: sqlite3.Connection, book_id: int, book: BookInput) 
         SET
             title = ?,
             normalized_title = ?,
+            isbn = ?,
             author_id = ?,
             series_id = ?,
             publication_year = ?,
@@ -233,6 +262,7 @@ def find_duplicates(
         SELECT
             books.id,
             books.title,
+            books.isbn,
             authors.name AS author,
             series.name AS series,
             books.publication_year,
@@ -263,6 +293,117 @@ def find_duplicates(
             source=row["source"],
             status=ReadStatus(row["status"]),
             notes=row["notes"],
+            isbn=row["isbn"],
         )
         for row in rows
     ]
+
+
+def get_book(connection: sqlite3.Connection, book_id: int) -> BookRecord:
+    """Return one stored book."""
+
+    rows = _select_books(connection, "WHERE books.id = ?", (book_id,))
+    if not rows:
+        raise LookupError(f"Book {book_id} does not exist")
+    return rows[0]
+
+
+def list_books(
+    connection: sqlite3.Connection, book_ids: Sequence[int] | None = None
+) -> list[BookRecord]:
+    """Return books in ID order, optionally limited to specific identifiers."""
+
+    if book_ids is None:
+        return _select_books(connection)
+    unique_ids = tuple(dict.fromkeys(book_ids))
+    if not unique_ids:
+        return []
+    placeholders = ", ".join("?" for _ in unique_ids)
+    return _select_books(
+        connection,
+        f"WHERE books.id IN ({placeholders})",
+        unique_ids,
+    )
+
+
+def _select_books(
+    connection: sqlite3.Connection,
+    where_clause: str = "",
+    parameters: tuple[object, ...] = (),
+) -> list[BookRecord]:
+    rows = connection.execute(
+        f"""
+        SELECT
+            books.id,
+            books.title,
+            books.isbn,
+            authors.name AS author,
+            series.name AS series,
+            books.publication_year,
+            sources.name AS source,
+            books.status,
+            books.notes
+        FROM books
+        LEFT JOIN authors ON authors.id = books.author_id
+        LEFT JOIN series ON series.id = books.series_id
+        LEFT JOIN sources ON sources.id = books.source_id
+        {where_clause}
+        ORDER BY books.id
+        """,
+        parameters,
+    ).fetchall()
+    return [
+        BookRecord(
+            id=int(row["id"]),
+            title=str(row["title"]),
+            author=row["author"],
+            series=row["series"],
+            publication_year=row["publication_year"],
+            source=row["source"],
+            status=ReadStatus(row["status"]),
+            notes=row["notes"],
+            isbn=row["isbn"],
+        )
+        for row in rows
+    ]
+
+
+def update_book_metadata(
+    connection: sqlite3.Connection,
+    book_id: int,
+    *,
+    isbn: str | None,
+    title: str,
+    author: str | None,
+    series: str | None,
+    publication_year: int | None,
+) -> None:
+    """Update only metadata fields controlled by enrichment."""
+
+    cleaned_title = clean_display_value(title)
+    if cleaned_title is None:
+        raise ValueError("Book title cannot be blank")
+    cursor = connection.execute(
+        """
+        UPDATE books
+        SET
+            isbn = ?,
+            title = ?,
+            normalized_title = ?,
+            author_id = ?,
+            series_id = ?,
+            publication_year = ?
+        WHERE id = ?
+        """,
+        (
+            isbn,
+            cleaned_title,
+            normalize_value(cleaned_title),
+            _lookup_id(connection, "authors", author),
+            _lookup_id(connection, "series", series),
+            publication_year,
+            book_id,
+        ),
+    )
+    if cursor.rowcount != 1:
+        raise LookupError(f"Book {book_id} does not exist")

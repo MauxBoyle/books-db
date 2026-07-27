@@ -46,6 +46,7 @@ def test_import_is_atomic_and_reports_counts(tmp_path):
     summary = import_books(import_path, database_path)
 
     assert (summary.imported, summary.replaced, summary.skipped) == (2, 0, 0)
+    assert summary.affected_ids == (1, 2)
     assert [row[1] for row in stored_books(database_path)] == ["Kindred", "Piranesi"]
 
 
@@ -123,6 +124,7 @@ def test_duplicate_can_replace_the_only_match(tmp_path):
     summary = import_books(second_path, database_path, input_func=answers("r"))
 
     assert (summary.imported, summary.replaced, summary.skipped) == (0, 1, 0)
+    assert summary.affected_ids == (1,)
     assert stored_books(database_path)[0][2] == 1965
 
 

@@ -1,8 +1,9 @@
 # books-db
 
 `books-db` imports a personal reading list into a normalized, file-backed
-SQLite database. It supports a personal comma-separated format and a Goodreads
-tab-separated export without requiring a database server.
+SQLite database and can interactively enrich it from Open Library. It supports
+a personal comma-separated format and a Goodreads tab-separated export without
+requiring a database server.
 
 ## Installation
 
@@ -44,6 +45,13 @@ The command prints imported, replaced, and skipped totals. A successful import
 returns exit code `0`; validation, storage, or cancellation failures return
 `1`. Invalid command-line usage uses argparse's standard exit code `2`.
 
+To enrich only the rows inserted or replaced by an import:
+
+```bash
+uv run books_db import path/to/books.csv --enrich \
+  --contact-email reader@example.com
+```
+
 ## Personal CSV format
 
 The personal format is comma-separated. Header matching ignores case, leading
@@ -58,13 +66,14 @@ or trailing whitespace, and repeated internal whitespace.
 | Status | `Status`, `Read Status`, `Read?`, `Read` | No |
 | Source | `Source`, `Recommendation Source` | No |
 | Notes | `Notes`, `Note` | No |
+| ISBN | `ISBN`, `ISBN-10`, `ISBN-13` | No |
 
 Example:
 
 ```csv
-Title,Author,Series,Year,Status,Source,Notes
-Kindred,Octavia E. Butler,,1979,read,Friend,Excellent
-Piranesi,Susanna Clarke,,2020,unread,Book club,
+Title,Author,Series,Year,ISBN-13,Status,Source,Notes
+Kindred,Octavia E. Butler,,1979,9780807083697,read,Friend,Excellent
+Piranesi,Susanna Clarke,,2020,9781635575637,unread,Book club,
 ```
 
 Blank statuses default to `unread`. The five stored statuses and accepted
@@ -86,7 +95,7 @@ whitespace.
 The Goodreads format must be tab-separated. `Title` is required. Recognized
 optional columns are `Author`, `Series`, `Original Publication Year`,
 `Year Published`, `Publication Year`, `Exclusive Shelf`, `Date Read`,
-`My Review`, `Private Notes`, and `Source`. Columns such as
+`My Review`, `Private Notes`, `Source`, `ISBN`, and `ISBN13`. Columns such as
 `Additional Authors` and `Book Id` are safely ignored.
 
 `Exclusive Shelf` maps as follows:
@@ -111,6 +120,55 @@ Private note text
 ```
 
 Both import formats are read as UTF-8 with optional BOM support.
+
+## ISBN validation
+
+ISBNs are stored without spaces or hyphens. Both ISBN-10 (including a final
+`X`) and ISBN-13 are checksum-validated. Quoted values and common spreadsheet
+wrappers such as `="978-0-8070-8369-7"` are accepted. If valid ISBN-10 and
+ISBN-13 columns are both populated, ISBN-13 is preferred. ISBN is nullable and
+not unique, so multiple physical copies of the same edition remain valid.
+
+## Open Library enrichment
+
+Enrich every stored book in ID order:
+
+```bash
+uv run books_db enrich --database data/library.db \
+  --contact-email reader@example.com
+```
+
+The email can instead be set once:
+
+```bash
+cp .env.example .env
+# Set BOOKS_DB_OPEN_LIBRARY_EMAIL in .env, then run:
+uv run books_db enrich --database data/library.db
+```
+
+The ignored local `.env` file can hold the address without committing it. An
+explicit `--contact-email` takes precedence over the process environment and
+`.env`. The application identifies itself to Open Library using this address.
+It searches by ISBN when available, otherwise by title and optional author.
+When several results are returned, it displays at most five for selection. It
+then reviews changed ISBN, title, author, series, and year values in that order.
+Missing stored values are accepted automatically. For other differences, press
+Enter to accept the proposed value or enter `keep` to retain the stored value.
+Source, reading status, and notes are never changed.
+
+The integration follows Open Library's
+[API usage guidelines](https://openlibrary.org/developers/api) and uses its
+[Search API](https://openlibrary.org/dev/docs/api/search).
+
+Each completed book is committed independently. Cancelling leaves the current
+and remaining books unchanged while preserving earlier work (and a preceding
+import). Individual no-match and lookup failures are reported and processing
+continues; configuration, database, and cancellation failures return exit code
+`1`.
+
+Successful JSON responses are cached in SQLite for seven days. Uncached
+requests use a ten-second timeout, run at no more than three per second, and
+retry HTTP 429 or server errors at most twice while honoring `Retry-After`.
 
 ## Validation and duplicates
 
@@ -139,6 +197,11 @@ SQLite stores books in `books` with nullable foreign keys to the normalized
 one row while retaining the first display spelling. The five reading statuses
 are enforced by a database `CHECK` constraint, and foreign-key enforcement is
 enabled on every application connection.
+
+`create_schema` safely adds the nullable, non-unique `books.isbn` column to
+databases created by earlier releases without removing existing records. The
+migration is safe to run repeatedly. The `open_library_cache` table stores
+successful API responses by canonical request URL.
 
 ## Development
 

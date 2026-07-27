@@ -33,6 +33,13 @@ class ImportSummary:
     imported: int = 0
     replaced: int = 0
     skipped: int = 0
+    affected_ids: tuple[int, ...] = ()
+
+    @property
+    def affected_record_ids(self) -> tuple[int, ...]:
+        """Return the records eligible for optional post-import enrichment."""
+
+        return self.affected_ids
 
 
 def _ask(input_func: InputFunction, prompt: str) -> str:
@@ -46,6 +53,7 @@ def _describe_match(position: int, match: BookRecord) -> str:
     details = [
         f"{position}. [id {match.id}] {match.title}",
         f"author: {match.author or '(none)'}",
+        f"ISBN: {match.isbn or '(none)'}",
         f"year: {match.publication_year if match.publication_year is not None else '(none)'}",
         f"status: {match.status.value}",
     ]
@@ -125,6 +133,7 @@ def import_books(
     imported = 0
     replaced = 0
     skipped = 0
+    affected_ids: list[int] = []
 
     try:
         connection.execute("BEGIN")
@@ -132,7 +141,7 @@ def import_books(
         for book in books:
             matches = find_duplicates(connection, book.title, book.author)
             if not matches:
-                insert_book(connection, book)
+                affected_ids.append(insert_book(connection, book))
                 imported += 1
                 continue
 
@@ -142,12 +151,13 @@ def import_books(
             if action == "skip":
                 skipped += 1
             elif action == "insert":
-                insert_book(connection, book)
+                affected_ids.append(insert_book(connection, book))
                 imported += 1
             else:
                 if selected_id is None:
                     raise AssertionError("Replacement requires a selected record")
                 replace_book(connection, selected_id, book)
+                affected_ids.append(selected_id)
                 replaced += 1
         connection.commit()
     except BaseException:
@@ -156,4 +166,9 @@ def import_books(
     finally:
         connection.close()
 
-    return ImportSummary(imported=imported, replaced=replaced, skipped=skipped)
+    return ImportSummary(
+        imported=imported,
+        replaced=replaced,
+        skipped=skipped,
+        affected_ids=tuple(dict.fromkeys(affected_ids)),
+    )
